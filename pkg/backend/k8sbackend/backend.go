@@ -1,4 +1,4 @@
-package kube
+package k8sbackend
 
 import (
 	"fmt"
@@ -15,17 +15,17 @@ import (
 )
 
 // SpinClient represents a client for managing pipelines.
-type SpinClient struct {
+type KubeClient struct {
 	log logrus.FieldLogger
 }
 
 // NewClient - Create a new default spinnaker client
-func NewClient(logger logrus.FieldLogger) *SpinClient {
-	return &SpinClient{log: logger}
+func NewClient(logger logrus.FieldLogger) *KubeClient {
+	return &KubeClient{log: logger}
 }
 
 // SavePipeline - Saves the pipeline as a YAML file in the specified folder.
-func (s *SpinClient) SavePipeline(pipelineJSON string) (*http.Response, error) {
+func (s *KubeClient) SavePipeline(pipelineJSON string) (*http.Response, error) {
 	// Unmarshal the pipeline JSON to extract metadata
 
 	currentDir, err := os.Getwd()
@@ -65,7 +65,7 @@ func (s *SpinClient) SavePipeline(pipelineJSON string) (*http.Response, error) {
 	return nil, nil
 }
 
-func (s *SpinClient) ExecutePipeline(argsJSON string, stringify bool) (string, *http.Response, error) {
+func (s *KubeClient) ExecutePipeline(argsJSON string, stringify bool) (string, *http.Response, error) {
 
 	// Check if a valid Kubernetes context is set
 	cmd := exec.Command("kubectl", "config", "current-context")
@@ -118,7 +118,7 @@ func (s *SpinClient) ExecutePipeline(argsJSON string, stringify bool) (string, *
 	return "", nil, nil
 }
 
-func (s *SpinClient) DeletePipeline(pipelineJSON string) (*http.Response, error) {
+func (s *KubeClient) DeletePipeline(pipelineJSON string) (*http.Response, error) {
 	// Get the current working directory
 	currentDir, err := os.Getwd()
 	if err != nil {
@@ -162,7 +162,7 @@ func (s *SpinClient) DeletePipeline(pipelineJSON string) (*http.Response, error)
 }
 
 // TestPipeline - Dummy implementation for testing a pipeline.
-func (s *SpinClient) TestPipeline(testConfig shore_testing.TestsConfig, onChange func(), stringify bool) error {
+func (s *KubeClient) TestPipeline(testConfig shore_testing.TestsConfig, onChange func(), stringify bool) error {
 	s.log.Info("Starting TestPipeline...")
 
 	s.log.Info("TestPipeline completed successfully.")
@@ -170,7 +170,7 @@ func (s *SpinClient) TestPipeline(testConfig shore_testing.TestsConfig, onChange
 }
 
 // GetPipeline - Dummy implementation for retrieving a pipeline.
-func (s *SpinClient) GetPipeline(application string, pipelineName string) (map[string]interface{}, *http.Response, error) {
+func (s *KubeClient) GetPipeline(application string, pipelineName string) (map[string]interface{}, *http.Response, error) {
 	s.log.Infof("Retrieving pipeline: application=%s, pipelineName=%s", application, pipelineName)
 
 	// Simulate a pipeline retrieval
@@ -189,7 +189,7 @@ func (s *SpinClient) GetPipeline(application string, pipelineName string) (map[s
 	return pipeline, nil, nil
 }
 
-func (s *SpinClient) GetPipelinesNamesAndApplication(pipelineJSON string) ([]string, string, error) {
+func (s *KubeClient) GetPipelinesNamesAndApplication(pipelineJSON string) ([]string, string, error) {
 	// Unmarshal the pipeline JSON to extract metadata
 	var pipeline map[string]interface{}
 	if err := jsoniter.Unmarshal([]byte(pipelineJSON), &pipeline); err != nil {
@@ -217,7 +217,7 @@ func (s *SpinClient) GetPipelinesNamesAndApplication(pipelineJSON string) ([]str
 }
 
 // WaitForPipelineToFinish - Dummy implementation for waiting for a pipeline to finish.
-func (s *SpinClient) WaitForPipelineToFinish(id string, timeout int) (string, *http.Response, error) {
+func (s *KubeClient) WaitForPipelineToFinish(id string, timeout int) (string, *http.Response, error) {
 	s.log.Infof("Waiting for pipeline to finish: id=%s, timeout=%d", id, timeout)
 
 	s.log.Info("Pipeline finished successfully.")

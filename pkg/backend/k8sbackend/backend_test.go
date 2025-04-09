@@ -1,4 +1,4 @@
-package kube
+package k8sbackend
 
 import (
 	"fmt"
@@ -18,7 +18,7 @@ func TestSavePipeline(t *testing.T) {
 	// Arrange
 	logger, _ = testLog.NewNullLogger()
 
-	client := &SpinClient{log: logger}
+	client := &KubeClient{log: logger}
 
 	pipelineJSON := `{
    "iamPolicy": {

@@ -1,4 +1,4 @@
-package k8smanifests
+package k8srender
 
 import (
 	"fmt"
