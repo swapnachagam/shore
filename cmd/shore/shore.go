@@ -4,11 +4,15 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Autodesk/shore/pkg/backend"
+	"github.com/Autodesk/shore/pkg/backend/kube"
 	"github.com/Autodesk/shore/pkg/backend/spinnaker"
 	"github.com/Autodesk/shore/pkg/cleanup_command"
 	"github.com/Autodesk/shore/pkg/command"
 	"github.com/Autodesk/shore/pkg/project"
+	"github.com/Autodesk/shore/pkg/renderer"
 	"github.com/Autodesk/shore/pkg/renderer/jsonnet"
+	"github.com/Autodesk/shore/pkg/renderer/k8smanifests"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -73,13 +77,6 @@ func init() {
 	fs := afero.NewOsFs()
 	logger = logrus.New()
 
-	commonDependencies := &command.Dependencies{
-		Project:  project.NewShoreProject(fs, logger),
-		Renderer: jsonnet.NewRenderer(fs, logger),
-		Backend:  spinnaker.NewClient(logger),
-		Logger:   logger,
-	}
-
 	rootCmd.PersistentFlags().CountVarP(&logVerbosity, "verbose", "v", "Logging verbosity")
 	// "default" should not be set explicitly on the command - it will be set in getConfigName.
 	rootCmd.PersistentFlags().StringP("executor-config", "X", os.Getenv("SHORE_EXECUTOR_CONFIG"),
@@ -87,6 +84,35 @@ func init() {
 	//'p' is used for 'payload' used by exec command. 'l' for load profile?
 	rootCmd.PersistentFlags().StringP("profile", "P", os.Getenv("SHORE_PROFILE"),
 		"The profile to use. Can also be set by $SHORE_PROFILE environment variable. Priority is: env variable, cli args, default.")
+	rootCmd.PersistentFlags().StringP("renderer", "R", os.Getenv("RENDERER"),
+		"which render to use (eg. k8s, jsonnet). Can also be set by $SHORE_PROFILE environment variable. Priority is: env variable, cli args, default.")
+	rootCmd.PersistentFlags().StringP("executor", "R", os.Getenv("EXECUTOR"),
+		"which executor to use (eg. spinnaker, dir). Can also be set by $SHORE_PROFILE environment variable. Priority is: env variable, cli args, default.")
+
+	rendererType, _ := rootCmd.PersistentFlags().GetString("renderer")
+
+	var rendererInstance renderer.Renderer
+	if rendererType == "R" {
+		rendererInstance = k8smanifests.NewRenderer(fs, logger)
+	} else {
+		rendererInstance = jsonnet.NewRenderer(fs, logger)
+	}
+
+	// Determine the backend based on the flag or default to spinnaker
+	executorType, _ := rootCmd.PersistentFlags().GetString("executor")
+	var backendInstance backend.Backend
+	if executorType == "R" {
+		backendInstance = kube.NewClient(logger)
+	} else {
+		backendInstance = spinnaker.NewClient(logger)
+	}
+
+	commonDependencies := &command.Dependencies{
+		Project:  project.NewShoreProject(fs, logger),
+		Renderer: rendererInstance,
+		Backend:  backendInstance,
+		Logger:   logger,
+	}
 
 	rootCmd.AddCommand(command.NewProjectCommand(commonDependencies))
 	rootCmd.AddCommand(command.NewRenderCommand(commonDependencies))
