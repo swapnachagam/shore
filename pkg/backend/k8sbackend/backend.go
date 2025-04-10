@@ -1,6 +1,8 @@
 package k8sbackend
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -12,6 +14,10 @@ import (
 	jsoniter "github.com/json-iterator/go"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // SpinClient represents a client for managing pipelines.
@@ -74,7 +80,6 @@ func (s *KubeClient) ExecutePipeline(argsJSON string, stringify bool) (string, *
 		return "", nil, fmt.Errorf("no valid Kubernetes context set: %w", err)
 	}
 
-	// Ensure the folder exists
 	currentDir, err := os.Getwd()
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to get current directory: %w", err)
@@ -84,6 +89,17 @@ func (s *KubeClient) ExecutePipeline(argsJSON string, stringify bool) (string, *
 	// Check if the folder exists
 	if _, err := os.Stat(folderPath); os.IsNotExist(err) {
 		return "", nil, fmt.Errorf("folder %s does not exist", folderPath)
+	}
+
+	// Create a Kubernetes client
+	config, err := clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to build Kubernetes config: %w", err)
+	}
+
+	k8sClient, err := client.New(config, client.Options{})
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
 	// Iterate over the files in the folder
@@ -97,14 +113,31 @@ func (s *KubeClient) ExecutePipeline(argsJSON string, stringify bool) (string, *
 			return nil
 		}
 
-		// Apply the file using kubectl
-		cmd := exec.Command("kubectl", "apply", "-f", path)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		// Read the YAML file
+		fileContent, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("failed to read file %s: %w", path, err)
+		}
 
-		s.log.Infof("Applying file: %s", path)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to apply file %s: %w", path, err)
+		// Print the YAML content
+		s.log.Infof("YAML Content of %s:\n%s", path, string(fileContent))
+
+		// Decode the YAML into a Kubernetes object
+		obj := &unstructured.Unstructured{}
+		decoder := yamlutil.NewYAMLOrJSONDecoder(bytes.NewReader(fileContent), 1024)
+		err = decoder.Decode(&obj.Object)
+
+		// Check if the object has required fields
+		if obj.GetAPIVersion() == "" || obj.GetKind() == "" {
+			s.log.Errorf("Invalid Kubernetes object in file %s: missing apiVersion or kind", path)
+			return fmt.Errorf("invalid Kubernetes object in file %s: missing apiVersion or kind", path)
+		}
+
+		// Apply the object using the Kubernetes client
+
+		if err := k8sClient.Patch(context.TODO(), obj, client.Apply, client.FieldOwner("shore")); err != nil {
+			s.log.Errorf("Failed to apply object: %v", obj)
+			return fmt.Errorf("failed to apply resource from file %s: %s", path, obj)
 		}
 
 		return nil
@@ -118,14 +151,18 @@ func (s *KubeClient) ExecutePipeline(argsJSON string, stringify bool) (string, *
 	return "", nil, nil
 }
 
-func (s *KubeClient) DeletePipeline(pipelineJSON string) (*http.Response, error) {
-	// Get the current working directory
+func (s *KubeClient) DeletePipeline(argsJSON string) (*http.Response, error) {
+	// Check if a valid Kubernetes context is set
+	cmd := exec.Command("kubectl", "config", "current-context")
+	output, err := cmd.Output()
+	if err != nil || len(output) == 0 {
+		return nil, fmt.Errorf("no valid Kubernetes context set: %w", err)
+	}
+
 	currentDir, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
-
-	// Define the path to the "generated" folder
 	folderPath := filepath.Join(currentDir, "generated")
 
 	// Check if the folder exists
@@ -133,7 +170,18 @@ func (s *KubeClient) DeletePipeline(pipelineJSON string) (*http.Response, error)
 		return nil, fmt.Errorf("folder %s does not exist", folderPath)
 	}
 
-	// Iterate over the files in the folder and delete them
+	// Create a Kubernetes client
+	config, err := clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Kubernetes config: %w", err)
+	}
+
+	k8sClient, err := client.New(config, client.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	// Iterate over the files in the folder
 	err = filepath.Walk(folderPath, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return fmt.Errorf("error accessing file %s: %w", path, err)
@@ -144,20 +192,47 @@ func (s *KubeClient) DeletePipeline(pipelineJSON string) (*http.Response, error)
 			return nil
 		}
 
-		// Delete the file
-		s.log.Infof("Deleting file: %s", path)
-		if err := os.Remove(path); err != nil {
-			return fmt.Errorf("failed to delete file %s: %w", path, err)
+		// Read the YAML file
+		fileContent, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("failed to read file %s: %w", path, err)
+		}
+
+		// Print the YAML content
+		s.log.Infof("YAML Content of %s:\n%s", path, string(fileContent))
+
+		// Decode the YAML into a Kubernetes object
+		obj := &unstructured.Unstructured{}
+		decoder := yamlutil.NewYAMLOrJSONDecoder(bytes.NewReader(fileContent), 1024)
+		err = decoder.Decode(&obj.Object)
+
+		// Check if the object has required fields
+		if obj.GetAPIVersion() == "" || obj.GetKind() == "" {
+			s.log.Errorf("Invalid Kubernetes object in file %s: missing apiVersion or kind", path)
+			return fmt.Errorf("invalid Kubernetes object in file %s: missing apiVersion or kind", path)
+		}
+
+		// Delete the object using the Kubernetes client
+		s.log.Infof("Deleting resource: %s", path)
+		if err := k8sClient.Delete(context.TODO(), obj); err != nil {
+			s.log.Errorf("Failed to delete object: %v", obj)
+			return fmt.Errorf("failed to delete resource from file %s: %w", path, err)
 		}
 
 		return nil
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to delete files in folder: %w", err)
+		return nil, fmt.Errorf("failed to delete resources in folder: %w", err)
 	}
 
-	s.log.Info("Successfully deleted all files in the folder")
+	// Delete the folder
+	s.log.Infof("Deleting folder: %s", folderPath)
+	if err := os.RemoveAll(folderPath); err != nil {
+		return nil, fmt.Errorf("failed to delete folder %s: %w", folderPath, err)
+	}
+
+	s.log.Info("Successfully deleted all resources and the folder")
 	return nil, nil
 }
 

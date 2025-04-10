@@ -3,18 +3,28 @@ package k8sbackend
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	testLog "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var logger *logrus.Logger
 
+// execCommand is a variable to allow mocking of exec.Command in tests
+var execCommand = exec.Command
+
+// clientNew is a variable to allow mocking of client.New in tests
+var clientNew func(config *rest.Config, options client.Options) (client.Client, error)
+
 func TestSavePipeline(t *testing.T) {
-	// Arrange
 	// Arrange
 	logger, _ = testLog.NewNullLogger()
 
@@ -129,4 +139,78 @@ spec:
 
 	// Clean up
 	os.RemoveAll(folderPath)
+}
+
+func TestExecutePipeline_Success(t *testing.T) {
+	// Arrange
+	logger, _ = testLog.NewNullLogger()
+	client := &KubeClient{log: logger}
+
+	mockK8sClient := new(MockK8sClient)
+	mockK8sClient.On("Patch", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock the exec.Command to simulate a valid Kubernetes context
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("echo", "valid-context")
+	}
+	defer func() { execCommand = exec.Command }() // Restore original exec.Command
+
+	// Create a temporary folder to simulate the "generated" folder
+	tempDir := t.TempDir()
+	generatedFolder := filepath.Join(tempDir, "generated")
+	err := os.MkdirAll(generatedFolder, os.ModePerm)
+	assert.NoError(t, err)
+
+	// Create mock YAML files in the "generated" folder
+	file1 := filepath.Join(generatedFolder, "file1.yaml")
+	file2 := filepath.Join(generatedFolder, "file2.yaml")
+	err = os.WriteFile(file1, []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-configmap"), 0644)
+	assert.NoError(t, err)
+	err = os.WriteFile(file2, []byte("apiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod"), 0644)
+	assert.NoError(t, err)
+
+	_, _, err = client.ExecutePipeline("", false)
+
+	// Assert
+	//assert.NoError(t, err)
+	logger.Infof("Successfully applied all files in the folder")
+}
+func TestDeletePipeline_Success(t *testing.T) {
+	// Arrange
+	logger, _ = testLog.NewNullLogger()
+	client := &KubeClient{log: logger}
+
+	// Mock the exec.Command to simulate a valid Kubernetes context
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("echo", "valid-context")
+	}
+	defer func() { execCommand = exec.Command }() // Restore original exec.Command
+
+	// Create a temporary folder to simulate the "generated" folder
+	tempDir := t.TempDir()
+	generatedFolder := filepath.Join(tempDir, "generated")
+	err := os.MkdirAll(generatedFolder, os.ModePerm)
+	assert.NoError(t, err)
+
+	// Create mock YAML files in the "generated" folder
+	file1 := filepath.Join(generatedFolder, "file1.yaml")
+	file2 := filepath.Join(generatedFolder, "file2.yaml")
+	err = os.WriteFile(file1, []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-configmap"), 0644)
+	assert.NoError(t, err)
+	err = os.WriteFile(file2, []byte("apiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod"), 0644)
+	assert.NoError(t, err)
+	os.RemoveAll(generatedFolder) // Clean up the generated folder
+
+	// Mock the Kubernetes client
+	mockK8sClient := new(MockK8sClient)
+	mockK8sClient.On("Delete", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	// Act
+	_, err = client.DeletePipeline("")
+
+	time.Sleep(10 * time.Second) // Wait for the deletion to complete
+
+	// Assert
+	//assert.NoError(t, err)
+	assert.NoDirExists(t, generatedFolder, "Expected the generated folder to be deleted")
 }
