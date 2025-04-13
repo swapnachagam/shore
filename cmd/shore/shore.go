@@ -25,6 +25,11 @@ var version = "local"
 
 var logVerbosity int
 var logger *logrus.Logger
+var rendererInstance renderer.Renderer
+var backendInstance backend.Backend
+
+var commonDependencies *command.Dependencies
+var fs afero.Fs = afero.NewOsFs()
 
 var rootCmd = &cobra.Command{
 	Use:           "shore",
@@ -40,6 +45,31 @@ var rootCmd = &cobra.Command{
 
 		profileName := GetProfileName(cmd)
 		ExecConfigName := GetExecutorConfigName(cmd)
+
+		// Check if the command is "render"
+		rendererType := GetRendererType(cmd)
+
+		// Initialize the Renderer based on the flag
+		if rendererType == "k" {
+			logger.Infof("Using Kubernetes Renderer (k8srender)")
+			rendererInstance = k8srender.NewRenderer(fs, logger)
+		} else {
+			logger.Infof("Using Jsonnet Renderer (jsonnet)")
+			rendererInstance = jsonnet.NewRenderer(fs, logger)
+		}
+		// Use executorType for other commands
+		executorType := GetExecutorType(cmd)
+		if executorType == "d" {
+			logger.Infof("Using Kubernetes Backend (k8sbackend)")
+			backendInstance = k8sbackend.NewClient(logger)
+		} else {
+			logger.Infof("Using Spinnaker Backend (spinnaker)")
+			backendInstance = spinnaker.NewClient(logger)
+		}
+
+		// Pass the rendererInstance to commonDependencies
+		commonDependencies.Renderer = rendererInstance
+		commonDependencies.Backend = backendInstance
 
 		logger.Debug("Profile set to - ", profileName)
 		logger.Debug("Executor configuration set to - ", ExecConfigName)
@@ -71,6 +101,14 @@ func getConfigName(cmd *cobra.Command, flagName string, envVar string) string {
 	return configName
 }
 
+func GetRendererType(cmd *cobra.Command) string {
+	return getConfigName(cmd, "renderer", "SHORE_RENDERER")
+}
+
+func GetExecutorType(cmd *cobra.Command) string {
+	return getConfigName(cmd, "executor", "SHORE_EXECUTOR")
+}
+
 func init() {
 	// TODO: Add global validations to init.
 	// cobra.OnInitialize()
@@ -84,33 +122,15 @@ func init() {
 	//'p' is used for 'payload' used by exec command. 'l' for load profile?
 	rootCmd.PersistentFlags().StringP("profile", "P", os.Getenv("SHORE_PROFILE"),
 		"The profile to use. Can also be set by $SHORE_PROFILE environment variable. Priority is: env variable, cli args, default.")
-	rootCmd.PersistentFlags().StringP("renderer", "k8s", os.Getenv("SHORE_RENDERER"),
-		"Which render to use (eg. k8s, jsonnet). Can also be set by $SHORE_PROFILE environment variable. Priority is: env variable, cli args, default.")
-	rootCmd.PersistentFlags().StringP("executor", "dir", os.Getenv("SHORE_EXECUTOR"),
-		"Which executor to use (eg. spinnaker, k8sbackend). Can also be set by $SHORE_PROFILE environment variable. Priority is: env variable, cli args, default.")
+	rootCmd.PersistentFlags().StringP("renderer", "k", os.Getenv("SHORE_RENDERER"),
+		"Which render to use (eg. k for k8s, jsonnet). Can also be set by $SHORE_RENDERER environment variable. Priority is: env variable, cli args, default.")
+	rootCmd.PersistentFlags().StringP("executor", "e", os.Getenv("SHORE_EXECUTOR"),
+		"Which executor to use (eg. spinnaker, d for k8sbackend). Can also be set by $SHORE_EXECUTOR environment variable. Priority is: env variable, cli args, default.")
 
-	rendererType, _ := rootCmd.PersistentFlags().GetString("renderer")
-
-	var rendererInstance renderer.Renderer
-	if rendererType == "k8s" {
-		rendererInstance = k8srender.NewRenderer(fs, logger)
-	} else {
-		rendererInstance = jsonnet.NewRenderer(fs, logger)
-	}
-
-	// Determine the backend based on the flag or default to spinnaker
-	executorType, _ := rootCmd.PersistentFlags().GetString("executor")
-	var backendInstance backend.Backend
-	if executorType == "dir" {
-		backendInstance = k8sbackend.NewClient(logger)
-	} else {
-		backendInstance = spinnaker.NewClient(logger)
-	}
-
-	commonDependencies := &command.Dependencies{
+	commonDependencies = &command.Dependencies{
 		Project:  project.NewShoreProject(fs, logger),
-		Renderer: rendererInstance,
-		Backend:  backendInstance,
+		Renderer: nil,
+		Backend:  nil,
 		Logger:   logger,
 	}
 
